@@ -137,8 +137,6 @@ Any further contributions from the community are welcome, so if you find an issu
 
 ## Visualisation
 
-## Visualisation
-
 During training, TensorBoard summaries (metrics, loss curves, etc.) are automatically saved to:
 ```
 3.deep_model/data/output/logs
