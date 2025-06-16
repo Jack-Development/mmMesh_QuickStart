@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import pickle
+import os
 
 
 class SMPL(torch.nn.Module):
@@ -8,9 +9,11 @@ class SMPL(torch.nn.Module):
         super(SMPL, self).__init__()
         if gender not in ["m", "f"]:
             raise ValueError("unconfirmed gender")
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        base_dir = os.path.join(base_dir, "smpl")
         smpl_path = {}
-        smpl_path["m"] = "./smpl_m.pkl"
-        smpl_path["f"] = "./smpl_f.pkl"
+        smpl_path["m"] = os.path.join(base_dir, "smpl_m.pkl")
+        smpl_path["f"] = os.path.join(base_dir, "smpl_f.pkl")
         with open(smpl_path[gender], "rb") as f:
             params = pickle.load(f)
         self.J_regressor = torch.from_numpy(

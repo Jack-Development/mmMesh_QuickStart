@@ -1,5 +1,13 @@
 import numpy as np
 
+# Configuration for dataset creation
+INPUT_DIR = "data/input"
+OUTPUT_DIR = "data/output"
+
+PC_SIZE = 128
+TEST_RATIO = 0.2
+
+# Configuration for mmWave radar parameters
 NUM_TX = 3  # tx order tx0,tx2,tx1, face to the board (left,right,upper)
 NUM_RX = 4
 
