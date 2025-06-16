@@ -1,3 +1,11 @@
+## 06-17-2025 (V1.3)
+**Maintainer: Jack Shilton**
+
+- Refactored codebase to simplify setup and execution on custom data.
+- Improved training feedback and logging: enhanced console printouts with multiline updates, terminal clearing between iterations, detailed elapsed/ETA times, and integrated TensorBoard logging (`tensorboard --logdir data/output/logs`) in `3.deep_model`.
+- Added multithreaded file processing support with progress indicators for parallel tasks in folder `2.point_cloud_generation`.
+- Updated README with QuickStart guide and usage instructions.
+
 ## 08-08-2021 (V1.2)
 - Release `DataCaptureDemo_1843new.lua` in folder `1.mmWave_data_capture`.
 - Add a simple tutorial to explain how to enable real-time data steaming.

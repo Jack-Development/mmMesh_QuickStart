@@ -17,3 +17,4 @@
 *.pkl
 *.mp4
 *.csv
+*.tfevents*
