@@ -112,8 +112,8 @@ class DataLoader:
         self.m_pquat_test = self.pquat[:, split:]
 
         # mmWave
-        self.pc_train = [seq[:split] for seq in self.pc_train]
-        self.pc_test = [seq[split:] for seq in self.pc_test]
+        # self.pc_train = [seq[:split] for seq in self.pc_train]
+        # self.pc_test = [seq[split:] for seq in self.pc_test]
 
         self.train_length = split
         self.test_length = self.total_length - split
