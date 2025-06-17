@@ -277,6 +277,37 @@ def process_bin_file(
     return np.stack(frames, axis=0)
 
 
+def split_sequential(dataset, train_count, min_frames):
+    """
+    Sequential split: for each file, take first train_count frames as train,
+    next (min_frames - train_count) frames as test.
+    """
+    train_splits = []
+    test_splits = []
+    for arr in dataset:
+        arr_trunc = arr[:min_frames]
+        train_splits.append(arr_trunc[:train_count])
+        test_splits.append(arr_trunc[train_count:])
+    return np.stack(train_splits, axis=0), np.stack(test_splits, axis=0)
+
+
+def split_random(dataset, test_ratio, seed=0):
+    """
+    Random sampling split: for each file, randomly permute frames,
+    then split at (1 - test_ratio).
+    """
+    rng = np.random.default_rng(seed)
+    train_splits = []
+    test_splits = []
+    for arr in dataset:
+        n = arr.shape[0]
+        perm = rng.permutation(n)
+        split_idx = int((1 - test_ratio) * n)
+        train_splits.append(arr[perm[:split_idx]])
+        test_splits.append(arr[perm[split_idx:]])
+    return np.stack(train_splits, axis=0), np.stack(test_splits, axis=0)
+
+
 def main():
     base_dir = os.path.dirname(os.path.abspath(__file__))
     input_dir = os.path.join(base_dir, cfg.INPUT_DIR)
@@ -334,9 +365,11 @@ def main():
     print(f"Total files processed: {len(dataset)}")
     print(f"Point cloud size: {pc_size}")
 
-    all_data = np.stack([arr[:min_frames] for arr in dataset], axis=0)
-    train = all_data[:, :train_count]
-    test = all_data[:, train_count:min_frames]
+    # Split according to chosen method
+    if cfg.SPLIT_METHOD == "sequential":
+        train, test = split_sequential(dataset, train_count, min_frames)
+    else:
+        train, test = split_random(dataset, test_ratio, seed=cfg.SPLIT_SEED)
 
     train_path = os.path.join(output_dir, "train.dat")
     test_path = os.path.join(output_dir, "test.dat")

@@ -4,8 +4,12 @@ import numpy as np
 INPUT_DIR = "data/input"
 OUTPUT_DIR = "data/output"
 
+# Options: 'random', 'sequential'
+SPLIT_METHOD = "random"
+SPLIT_SEED = 42  # Random seed for reproducibility
+
 PC_SIZE = 128
-TEST_RATIO = 0.2
+TEST_RATIO = 0.1
 
 # Configuration for mmWave radar parameters
 NUM_TX = 3  # tx order tx0,tx2,tx1, face to the board (left,right,upper)
