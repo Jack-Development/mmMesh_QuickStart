@@ -17,10 +17,6 @@ BYTES_IN_FRAME = (
     * ADC_PARAMS["samples"]
     * ADC_PARAMS["bytes"]
 )
-BYTES_IN_FRAME_CLIPPED = (BYTES_IN_FRAME // BYTES_IN_PACKET) * BYTES_IN_PACKET
-PACKETS_IN_FRAME = BYTES_IN_FRAME / BYTES_IN_PACKET
-PACKETS_IN_FRAME_CLIPPED = BYTES_IN_FRAME // BYTES_IN_PACKET
-UINT16_IN_PACKET = BYTES_IN_PACKET // 2
 UINT16_IN_FRAME = BYTES_IN_FRAME // 2
 
 
@@ -78,7 +74,6 @@ class adcCapThread(threading.Thread):
     def _frame_receiver(self):
         # first capture -- find the beginning of a Frame
         self.data_socket.settimeout(1)
-        lost_packets = False
         recentframe = np.zeros(UINT16_IN_FRAME, dtype=np.int16)
         while self.whileSign:
             packet_num, byte_count, packet_data = self._read_data_packet()
@@ -100,7 +95,6 @@ class adcCapThread(threading.Thread):
             packet_num, byte_count, packet_data = self._read_data_packet()
             # fix up the lost packets
             if last_packet_num < packet_num - 1:
-                lost_packets = True
                 print("\a")
                 print("Packet Lost! Please discard this data.")
                 exit(0)

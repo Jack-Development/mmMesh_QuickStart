@@ -2,17 +2,17 @@ NUM_TX = 3
 NUM_RX = 4
 
 
-START_FREQ = 77 
-ADC_START_TIME = 6 
+START_FREQ = 77
+ADC_START_TIME = 6
 FREQ_SLOPE = 60.012
 ADC_SAMPLES = 256
 SAMPLE_RATE = 4400
-RX_GAIN = 30 
+RX_GAIN = 30
 
 IDLE_TIME = 7
 RAMP_END_TIME = 65
 CHIRP_LOOPS = 128
-PERIODICITY = 100 
+PERIODICITY = 100
 
 autoStart = 1
 NumOfProfile = 1
@@ -80,9 +80,9 @@ else
 		partId = 6843
 		ar1.frequencyBandSelection("60G")
 	else
-		WriteToLog("Inavlid Device part number in ES2 and ES3 devices\n" ..partId)
+		WriteToLog("Invalid Device part number in ES2 and ES3 devices\n" ..partId)
     end
-end 
+end
 
 res, ESVersion = ar1.ReadRegister(0xFFFFE218, 0, 31)
 ESVersion = bit_and(ESVersion, 15)
@@ -107,8 +107,8 @@ elseif(partId == 6843) then
     BSS_FW    = fw_path.."\\radarss\\xwr68xx_radarss.bin"
     MSS_FW    = fw_path.."\\masterss\\xwr68xx_masterss.bin"
 else
-    WriteToLog("Inavlid Device partId FW\n" ..partId)
-    WriteToLog("Inavlid Device ESVersion\n" ..ESVersion)
+    WriteToLog("Invalid Device partId FW\n" ..partId)
+    WriteToLog("Invalid Device ESVersion\n" ..ESVersion)
 end
 
 if (ar1.DownloadBSSFw(BSS_FW) == 0) then
@@ -149,8 +149,8 @@ else
         WriteToLog("ChanNAdcConfig Success\n", "green")
     else
         WriteToLog("ChanNAdcConfig failure\n", "red")
-    end  
-end      
+    end
+end
 RSTD.Sleep(1000)
 
 if (partId == 1642) then
@@ -216,7 +216,7 @@ if(partId == 1843) then
             WriteToLog("ProfileConfig No."..n.."Success\n", "green")
         else
             WriteToLog("ProfileConfig No."..n.."failure\n", "red")
-        end      
+        end
     end
 end
 for i = 0, NumOfChirpInLoop - 1 do
@@ -286,7 +286,7 @@ ar1.CaptureCardConfig_StartRecord(adc_data_path, 0)
 RSTD.Sleep(1000)
 
 if (autoStart > 0 ) then
-    
+
     local socket1 = require"socket"
     local t0 = socket1.gettime()
     print(t0)

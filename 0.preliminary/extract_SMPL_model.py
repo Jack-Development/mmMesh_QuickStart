@@ -14,7 +14,7 @@ name_mapper = {
 if __name__ == "__main__":
     if len(sys.argv) < 2:
         print(
-            'Error: input modle path to file "basicModel_f_lbs_10_207_0_v1.0.0.pkl" and "basicmodel_m_lbs_10_207_0_v1.0.0.pkl"'
+            'Error: input model path to file "basicModel_f_lbs_10_207_0_v1.0.0.pkl" and "basicmodel_m_lbs_10_207_0_v1.0.0.pkl"'
         )
         exit(-1)
     src_path = sys.argv[1]
