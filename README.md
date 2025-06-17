@@ -26,18 +26,34 @@ Any further contributions from the community are welcome, so if you find an issu
 │   ├── streaming.py
 │   └── DataCaptureDemo_1843new.lua
 ├── 2.point_cloud_generation         # Convert .bin to .dat and point clouds
+│   ├── data
+│       ├── input
+│       └── output
 │   ├── configuration.py
 │   └── pc_generation.py
 ├── 3.deep_model                     # Deep model training & inference
-│   ├── data.py
-│   ├── infer_model.py
-│   ├── network.py
-│   ├── smpl_utils_extend.py
-│   ├── train_model.py
-│   └── data                        # Created automatically on first run
-│       └── input
+│   ├── data                        # Created automatically on first run
+│       ├── input
 │           ├── mmwave_data         # mmWave `.dat` files (train.dat, test.dat)
 │           └── mocap_data          # MoCap files (`.pkl`)
+│       └── output
+│   ├── data_loader
+│       └── dataloader.py
+│   ├── models
+│       ├── mmwave_model.py
+│       ├── modules.py
+│       ├── networks.py
+│       └── utils.py
+│   ├── smpl_models
+│       ├── smpl
+│       ├── smpl_utils_extend.py
+│       └── smpl_wrapper.py
+│   ├── train
+│       ├── evaluator.py
+│       ├── trainer.py
+│       └── utils.py
+│   ├── config.py
+│   └── start.py
 ├── HISTORY.md
 ├── LICENSE
 ├── README.md
@@ -118,8 +134,6 @@ Any further contributions from the community are welcome, so if you find an issu
 
 ## 4. Deep Model: Inference
   NOT CURRENTLY IMPLEMENTED
-
-## Visualisation
 
 ## Visualisation
 
