@@ -16,6 +16,7 @@ class DataLoader:
         seq_length: int,
         pc_size: int,
         test_split_ratio: float = 0.2,
+        split_method: str = "sequential",
         prefetch_size: int = 128,
         test_buffer: int = 2,
         num_workers: int = 4,
@@ -28,6 +29,7 @@ class DataLoader:
         self.seq_length = seq_length
         self.pc_size = pc_size
         self.test_split = test_split_ratio
+        self.split_method = split_method
         self.prefetch_size = prefetch_size
         self.test_buffer = test_buffer
         self.num_workers = num_workers
@@ -49,23 +51,22 @@ class DataLoader:
 
     def _load_mocap(self, paths: List[str]):
         """Load mocap .pkl files into arrays: trans, pquat, betas, gender."""
-        # Collect mocap dicts
         data_list = []
         for p in sorted(paths):
             with open(p, "rb") as f:
                 data_list.append(pickle.load(f))
 
-        # Downsample step: e.g., 120fps -> 10fps gives step=12
         step = self.mocap_fps // self.mmwave_fps
-        # Number of output frames at mmWave rate
-        raw_frames = data_list[0]["trans"].shape[0]
-        total_frames = raw_frames // step
-        # Number of rotation joints (fullpose length is total_frames*3)
+
+        # figure out how many down-sampled frames each file has,
+        # then pick the smallest so every file can fit
+        down_lengths = [d["trans"].shape[0] // step for d in data_list]
+        total_frames = min(down_lengths)
+
         J = data_list[0]["fullpose"].shape[1] // 3
 
         N = len(data_list)
         self.betas = np.stack([d["betas"][:10] for d in data_list], axis=0)
-        # If mocap dict contains gender use it, else default to zeros
         self.gender = np.array(
             [d.get("gender", 0) for d in data_list], dtype=np.float32
         )
@@ -74,20 +75,21 @@ class DataLoader:
         num_smpl = len(smpl_map)
         self.joint_size = num_smpl
 
-        # Allocate buffers
+        # now allocate two uniform buffers
         self.trans = np.zeros((N, total_frames, 3), dtype=np.float32)
         self.pquat = np.zeros((N, total_frames, num_smpl, 3, 3), dtype=np.float32)
 
-        # Fill buffers
         for i, d in enumerate(data_list):
-            # Sample every `step` frames
-            trans_ds = d["trans"][::step][:total_frames]
-            pose_ds = d["fullpose"][::step][:total_frames]
+            trans_ds = d["trans"][::step][:total_frames]  # shape: (total_frames, 3)
+            pose_ds = d["fullpose"][::step][:total_frames]  # shape: (total_frames, J*3)
 
             self.trans[i] = trans_ds
-            # Convert Rodrigues vectors to rotation matrices
-            rot_mats = Rotation.from_rotvec(pose_ds.reshape(-1, 3)).as_matrix()
-            rot_mats = rot_mats.reshape(total_frames, J, 3, 3)
+
+            rot_mats = (
+                Rotation.from_rotvec(pose_ds.reshape(-1, 3))
+                .as_matrix()
+                .reshape(total_frames, J, 3, 3)
+            )
             self.pquat[i] = rot_mats[:, smpl_map, :, :]
 
         self.num_samples = N
@@ -103,20 +105,131 @@ class DataLoader:
 
     def _split_data(self):
         """Split mocap and mmWave along temporal axis into train/test."""
-        split = int(self.total_length * (1 - self.test_split))
+        if self.split_method == "sequential":
+            self._split_sequential()
+        elif self.split_method == "end":
+            self._split_end()
+        else:
+            raise ValueError(f"Unknown split method: {self.split_method}")
 
-        # mocap
-        self.m_trans_train = self.trans[:, :split]
-        self.m_trans_test = self.trans[:, split:]
-        self.m_pquat_train = self.pquat[:, :split]
-        self.m_pquat_test = self.pquat[:, split:]
+        # Debug shape of Mocap and mmWave data
+        print("\n=== DEBUG: DataLoader split ===")
+        print(f"Total subjects: {self.num_samples}")
+        print(f"Test split ratio: {self.test_split}")
+        print(f"Total mocap length: {self.total_length}")
+        print(f"Train length: {self.train_length}, Test length: {self.test_length}")
+        print(f"Train mocap shape: {self.m_trans_train.shape}")
+        print(f"Test mocap shape: {self.m_trans_test.shape}")
+        print(f"Train mmWave shape: {[seq.shape for seq in self.pc_train]}")
+        print(f"Test mmWave shape: {[seq.shape for seq in self.pc_test]}")
+        print("=== END DEBUG ===\n")
+
+    def _split_sequential(self):
+        """Sequential split: overall temporal split (current method)."""
+        # Mocap-based split
+        mocap_split = int(self.total_length * (1 - self.test_split))
+        mocap_test = self.total_length - mocap_split
+
+        # How many frames mmWave actually has in each list
+        mmw_train_lens = [seq.shape[0] for seq in self.pc_train]
+        mmw_test_lens = [seq.shape[0] for seq in self.pc_test]
+
+        # Final lengths = min(mocap, mmWave) for each phase
+        self.train_length = min(mocap_split, min(mmw_train_lens))
+        self.test_length = min(mocap_test, min(mmw_test_lens))
+
+        # Crop both modalities exactly to those lengths
+        # Mocap
+        self.m_trans_train = self.trans[:, : self.train_length]
+        self.m_trans_test = self.trans[:, -self.test_length :]
+        self.m_pquat_train = self.pquat[:, : self.train_length]
+        self.m_pquat_test = self.pquat[:, -self.test_length :]
 
         # mmWave
-        # self.pc_train = [seq[:split] for seq in self.pc_train]
-        # self.pc_test = [seq[split:] for seq in self.pc_test]
+        # self.pc_train = [seq[: self.train_length] for seq in self.pc_train]
+        # self.pc_test = [seq[: self.test_length] for seq in self.pc_test]
 
-        self.train_length = split
-        self.test_length = self.total_length - split
+    def _split_end(self):
+        """End split: per-clip split taking last test_split percentage from each clip."""
+        print("\n=== DEBUG: _split_end method ===")
+        print(f"Total subjects: {self.num_samples}")
+        print(f"Test split ratio: {self.test_split}")
+        print(f"Total mocap length: {self.total_length}")
+
+        # For each subject, split their individual timeline
+        train_lengths = []
+        test_lengths = []
+
+        for s in range(self.num_samples):
+            # Get available lengths for this subject
+            mocap_len = self.total_length
+            mmw_train_len = self.pc_train[s].shape[0]
+            mmw_test_len = self.pc_test[s].shape[0]
+
+            # Use minimum available length as the clip's total length
+            clip_length = min(mocap_len, mmw_train_len + mmw_test_len)
+
+            # Split this clip's timeline
+            test_count = int(self.test_split * clip_length)
+            test_count = max(test_count, 1) if clip_length > 1 else 0
+            train_count = clip_length - test_count
+
+            train_lengths.append(train_count)
+            test_lengths.append(test_count)
+
+            print(
+                f"Subject {s:2d}: mocap={mocap_len}, mmw_train={mmw_train_len}, mmw_test={mmw_test_len}"
+            )
+            print(
+                f"           clip_length={clip_length}, train={train_count}, test={test_count}"
+            )
+
+        # Use minimum lengths across all subjects for consistent batching
+        self.train_length = min(train_lengths)
+        self.test_length = min(test_lengths)
+
+        print(f"\nFinal lengths - train: {self.train_length}, test: {self.test_length}")
+
+        # Split each subject's data individually
+        m_trans_train_list = []
+        m_trans_test_list = []
+        m_pquat_train_list = []
+        m_pquat_test_list = []
+
+        for s in range(self.num_samples):
+            # Get this subject's available length
+            clip_length = min(
+                self.total_length, self.pc_train[s].shape[0] + self.pc_test[s].shape[0]
+            )
+
+            # Split mocap data for this subject
+            test_start = clip_length - self.test_length
+
+            m_trans_train_list.append(self.trans[s, : self.train_length])
+            m_trans_test_list.append(
+                self.trans[s, test_start : test_start + self.test_length]
+            )
+            m_pquat_train_list.append(self.pquat[s, : self.train_length])
+            m_pquat_test_list.append(
+                self.pquat[s, test_start : test_start + self.test_length]
+            )
+
+            print(
+                f"Subject {s:2d} mocap split: train frames 0-{self.train_length-1}, test frames {test_start}-{test_start + self.test_length - 1}"
+            )
+
+        # Stack back into arrays
+        self.m_trans_train = np.stack(m_trans_train_list, axis=0)
+        self.m_trans_test = np.stack(m_trans_test_list, axis=0)
+        self.m_pquat_train = np.stack(m_pquat_train_list, axis=0)
+        self.m_pquat_test = np.stack(m_pquat_test_list, axis=0)
+
+        print("\nFinal arrays:")
+        print(f"m_trans_train: {self.m_trans_train.shape}")
+        print(f"m_trans_test: {self.m_trans_test.shape}")
+        print(f"m_pquat_train: {self.m_pquat_train.shape}")
+        print(f"m_pquat_test: {self.m_pquat_test.shape}")
+        print("=== END DEBUG ===\n")
 
     def _init_queues(self):
         self.flag = mp.Value("b", True)

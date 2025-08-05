@@ -15,6 +15,11 @@ CONFIG = {
     "vertice_rate": 0.001,
     "betas_rate": 0.1,
     "device": f"{'cuda:0' if torch.cuda.is_available() else 'cpu'}",
+    "mocap_fps": 10,
+    "mmwave_fps": 10,
+    "split_ratio": 0.1,
+    "split_method": "end",  # Options: 'end', 'sequential'
+    "visualization": False,
 }
 
 DATABASE_CONFIG = {

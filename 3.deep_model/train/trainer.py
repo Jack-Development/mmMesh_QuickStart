@@ -12,6 +12,7 @@ from models.mmwave_model import mmWaveModel
 from smpl_models.smpl_wrapper import SMPLWrapper
 from train.utils import hinge_loss
 from train.evaluator import Evaluator
+from train.visualizer import TrainingVisualizer, create_training_visualization
 
 
 class Trainer:
@@ -51,18 +52,24 @@ class Trainer:
             batch_size=self.cfg["batch_size"],
             seq_length=self.cfg["train_length"],
             pc_size=self.cfg["pc_size"],
-            test_split_ratio=0.2,
+            test_split_ratio=self.cfg["split_ratio"],
+            split_method=self.cfg["split_method"],
             prefetch_size=128,
             test_buffer=2,
             num_workers=4,
+            mocap_fps=self.cfg["mocap_fps"] if "mocap_fps" in self.cfg else 120,
+            mmwave_fps=self.cfg["mmwave_fps"] if "mmwave_fps" in self.cfg else 10,
             device=self.device,
         )
 
         self.model = mmWaveModel(self.dataset.joint_size).to(self.device)
         self.optimizer = torch.optim.Adam(
-            self.model.parameters(), lr=self.cfg["learning_rate"]
+            self.model.parameters(), lr=self.cfg["learning_rate"], weight_decay=1e-5
         )
-        self.criterion = torch.nn.L1Loss(reduction="sum")
+        self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, mode="min", factor=0.5, patience=3
+        )
+        self.criterion = torch.nn.L1Loss(reduction="mean")
         self.criterion_gender = hinge_loss
         self.cos = torch.nn.CosineSimilarity(-1)
 
@@ -75,6 +82,10 @@ class Trainer:
         self.leaf_kp = torch.tensor(
             [19, 21, 18, 20, 5, 8, 4, 7], dtype=torch.long, device=self.device
         )
+
+        # Add visualizer
+        self.vis_output_dir = os.path.join(self.output_path, "visualizations")
+        self.visualizer = TrainingVisualizer(self.vis_output_dir)
 
     def configure(self):
         self.write_slot = self.cfg["write_slot"]
@@ -242,7 +253,7 @@ class Trainer:
 
             loss = (
                 self.vertice_rate * self.criterion(pred_v, vertice_tensor)
-                + self.criterion(pred_s, ske_tensor)
+                + 5.0 * self.criterion(pred_s, ske_tensor)
                 + self.criterion(pred_l, trans_tensor[..., :2])
                 + self.betas_rate * self.criterion(pred_b, betas_tensor)
                 + self.criterion_gender(pred_g, gender_tensor)
@@ -251,6 +262,22 @@ class Trainer:
 
         self.optimizer.step()
         return
+
+    def verify_before_training(self):
+        """Run data verification before training starts."""
+        visualizer = TrainingVisualizer(self.vis_output_dir)
+
+        # Run the verification
+        visualizer.verify_data_synchronization(
+            self, max_subjects=12, frames_per_subject=5, create_videos=True
+        )
+
+        # Wait for user confirmation
+        response = input("\nData verification complete. Continue training? (y/n): ")
+        if response.lower() != "y":
+            print("Training cancelled.")
+            exit()
+        print("Starting training...\n")
 
     def train_model(self):
         evaluator = Evaluator(self)
@@ -277,12 +304,6 @@ class Trainer:
             train_loc_loss,
             train_betas_loss,
             train_gender_loss,
-            train_angle_report,
-            train_trans_report,
-            train_vertice_report,
-            train_ske_report,
-            train_loc_report,
-            train_betas_report,
             pquat_loss,
             trans_loss,
             vertice_loss,
@@ -290,14 +311,18 @@ class Trainer:
             loc_loss,
             betas_loss,
             gender_loss,
-            angle_report,
-            trans_report,
-            vertice_report,
-            ske_report,
-            loc_report,
-            betas_report,
-            gender_acc,
         ) = metrics
+
+        val_loss = (
+            pquat_loss
+            + trans_loss
+            + vertice_loss
+            + ske_loss
+            + loc_loss
+            + betas_loss
+            + gender_loss
+        )
+        self.scheduler.step(val_loss)
 
         with open(loss_path, "w") as lossfile, open(eval_path, "w") as evalfile:
             # log to tensorboard at step 0
@@ -357,6 +382,7 @@ class Trainer:
                 need_print = need_write or (step < 1000 and step % 100 == 0)
                 need_save = step % self.save_slot == 0
                 need_log = step % self.log_slot == 0
+                need_visualize = step % 500 == 0
 
                 if need_write or need_print or need_log:
                     metrics = evaluator.evaluate()
@@ -368,12 +394,6 @@ class Trainer:
                         train_loc_loss,
                         train_betas_loss,
                         train_gender_loss,
-                        train_angle_report,
-                        train_trans_report,
-                        train_vertice_report,
-                        train_ske_report,
-                        train_loc_report,
-                        train_betas_report,
                         pquat_loss,
                         trans_loss,
                         vertice_loss,
@@ -381,13 +401,6 @@ class Trainer:
                         loc_loss,
                         betas_loss,
                         gender_loss,
-                        angle_report,
-                        trans_report,
-                        vertice_report,
-                        ske_report,
-                        loc_report,
-                        betas_report,
-                        gender_acc,
                     ) = metrics
 
                 if need_log:
@@ -460,5 +473,25 @@ class Trainer:
 
                 if need_save:
                     self.save_model(f"batch{step}")
+
+                if need_visualize:
+                    try:
+                        train_results, eval_results = create_training_visualization(
+                            self, step, self.vis_output_dir
+                        )
+
+                        if train_results:
+                            frame_path, single_video, grid_video = train_results
+                            print(f"Training - Frame: {frame_path}")
+                            print(f"Training - Single video: {single_video}")
+                            print(f"Training - Grid video: {grid_video}")
+
+                        if eval_results:
+                            eval_frame, eval_video = eval_results
+                            print(f"Evaluation - Frame: {eval_frame}")
+                            print(f"Evaluation - Video: {eval_video}")
+
+                    except Exception as e:
+                        print(f"Visualization failed: {e}")
 
             writer.close()

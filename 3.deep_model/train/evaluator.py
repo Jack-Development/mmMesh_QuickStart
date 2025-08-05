@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-from train.utils import hinge_loss, angle_loss
+from train.utils import hinge_loss
 
 
 class Evaluator:
@@ -46,12 +46,6 @@ class Evaluator:
             "loc_loss",
             "betas_loss",
             "gender_loss",
-            "angle_report",
-            "trans_report",
-            "vertice_report",
-            "ske_report",
-            "loc_report",
-            "betas_report",
         ]
         accum = dict.fromkeys(keys, 0.0)
 
@@ -81,12 +75,6 @@ class Evaluator:
             accum["loc_loss"] / norm,
             accum["betas_loss"] / norm * self.betas_rate,
             accum["gender_loss"] / norm,
-            accum["angle_report"] / norm / 8,
-            accum["trans_report"] / norm,
-            accum["vertice_report"] / norm / 6890,
-            accum["ske_report"] / norm / 24,
-            accum["loc_report"] / norm,
-            accum["betas_report"] / norm,
         ]
 
     def _eval_test(self):
@@ -99,13 +87,6 @@ class Evaluator:
             "loc_loss",
             "betas_loss",
             "gender_loss",
-            "angle_report",
-            "trans_report",
-            "vertice_report",
-            "ske_report",
-            "loc_report",
-            "betas_report",
-            "gender_acc",
         ]
         accum = dict.fromkeys(keys, 0.0)
 
@@ -151,13 +132,6 @@ class Evaluator:
             accum["loc_loss"] / norm,
             accum["betas_loss"] / norm * self.betas_rate,
             accum["gender_loss"] / norm,
-            accum["angle_report"] / norm / 8,
-            accum["trans_report"] / norm,
-            accum["vertice_report"] / norm / 6890,
-            accum["ske_report"] / norm / 24,
-            accum["loc_report"] / norm,
-            accum["betas_report"] / norm,
-            accum["gender_acc"] / self.num_samples,
         ]
 
     def _compute_metrics(
@@ -220,21 +194,10 @@ class Evaluator:
             "pquat_loss": self.criterion(pred_q, pquat_tensor).item(),
             "trans_loss": self.criterion(pred_t, trans_tensor).item(),
             "vertice_loss": self.criterion(pred_v, vertice_tensor).item(),
-            "ske_loss": self.criterion(pred_s, ske_tensor).item(),
+            "ske_loss": 5.0 * self.criterion(pred_s, ske_tensor).item(),
             "loc_loss": self.criterion(pred_l, trans_tensor[..., :2]).item(),
             "betas_loss": self.criterion(pred_b, betas_tensor).item(),
             "gender_loss": self.criterion_gender(pred_g, gender_tensor).item(),
-            "angle_report": angle_loss(pred_s, ske_tensor, root_kp, leaf_kp),
-            "trans_report": torch.norm(pred_t - trans_tensor, dim=-1).sum().item(),
-            "vertice_report": torch.norm(pred_v - vertice_tensor, dim=-1).sum().item(),
-            "ske_report": torch.norm(pred_s - ske_tensor, dim=-1).sum().item(),
-            "loc_report": torch.norm(pred_l - trans_tensor[..., :2], dim=-1)
-            .sum()
-            .item(),
-            "betas_report": self.cos(pred_b, betas_tensor).sum().item(),
         }
-        if not is_train:
-            diff = torch.abs((pred_g > 0.5).float() - gender_tensor).sum().item()
-            metrics["gender_acc"] = 1.0 - diff / seq_len
 
         return metrics
