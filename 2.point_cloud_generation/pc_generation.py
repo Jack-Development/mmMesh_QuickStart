@@ -3,9 +3,9 @@ import numpy as np
 import os
 import glob
 from tqdm import tqdm
-import traceback
 import configuration as cfg
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from visualize import create_dataset_visualizations
 
 
 class FrameConfig:
@@ -153,7 +153,7 @@ def naive_xyz(virtual_ant, num_tx=3, num_rx=4, fft_size=64):
     elevation_ant_padded[:num_rx, :] = elevation_ant
 
     # Process elevation information
-    elevation_fft = np.fft.fft(elevation_ant, axis=0)
+    elevation_fft = np.fft.fft(elevation_ant_padded, axis=0)
     elevation_max = np.argmax(
         np.log2(np.abs(elevation_fft)), axis=0
     )  # shape = (num_detected_obj, )
@@ -224,6 +224,16 @@ def frame2pointcloud(frame, pointCloudProcessCFG):
     return pointCloud
 
 
+def apply_coordinate_flips(points):
+    if cfg.FLIP_X:
+        points[:, 0] = -points[:, 0]  # Flip X coordinate
+
+    if cfg.FLIP_Y:
+        points[:, 1] = -points[:, 1]  # Flip Y coordinate
+
+    return points
+
+
 def reg_data(data, pc_size):
     pc_tmp = np.zeros((pc_size, 6), dtype=np.float32)
     pc_no = data.shape[0]
@@ -266,6 +276,7 @@ def process_bin_file(
         else:
             raw_pts = pc.T
             raw_pts[:, :3] += shift_arr
+            raw_pts = apply_coordinate_flips(raw_pts)
             sampled = reg_data(raw_pts, pc_size)
 
         frames.append(sampled)
@@ -279,16 +290,64 @@ def process_bin_file(
 
 def split_sequential(dataset, train_count, min_frames):
     """
-    Sequential split: for each file, take first train_count frames as train,
-    next (min_frames - train_count) frames as test.
+    Sequential split: Fill train set with complete files sequentially,
+    then put remaining files in test set.
     """
     train_splits = []
     test_splits = []
-    for arr in dataset:
-        arr_trunc = arr[:min_frames]
-        train_splits.append(arr_trunc[:train_count])
-        test_splits.append(arr_trunc[train_count:])
-    return np.stack(train_splits, axis=0), np.stack(test_splits, axis=0)
+    current_train_frames = 0
+
+    for i, arr in enumerate(dataset):
+        arr_trunc = arr[:min_frames]  # Truncate to min_frames
+
+        # If adding this entire file to train won't exceed train_count
+        if current_train_frames + min_frames <= train_count:
+            train_splits.append(arr_trunc)
+            current_train_frames += min_frames
+        else:
+            # If we still need some frames for train set
+            if current_train_frames < train_count:
+                remaining_train_needed = train_count - current_train_frames
+                train_splits.append(arr_trunc[:remaining_train_needed])
+                test_splits.append(arr_trunc[remaining_train_needed:])
+                current_train_frames = train_count
+            else:
+                # All remaining files go to test
+                test_splits.append(arr_trunc)
+
+    # Pad arrays to have consistent shapes for stacking
+    if train_splits:
+        # All train files should have the same length (min_frames or partial)
+        max_train_len = max(arr.shape[0] for arr in train_splits)
+        train_padded = []
+        for arr in train_splits:
+            if arr.shape[0] < max_train_len:
+                # This should only happen for the last partial file
+                padded = np.zeros(
+                    (max_train_len, arr.shape[1], arr.shape[2]), dtype=arr.dtype
+                )
+                padded[: arr.shape[0]] = arr
+                train_padded.append(padded)
+            else:
+                train_padded.append(arr)
+        train_array = np.concatenate(train_padded, axis=0).reshape(
+            -1, arr.shape[1], arr.shape[2]
+        )
+    else:
+        train_array = np.empty(
+            (0, dataset[0].shape[1], dataset[0].shape[2]), dtype=dataset[0].dtype
+        )
+
+    if test_splits:
+        test_array = np.concatenate(test_splits, axis=0).reshape(
+            -1, arr.shape[1], arr.shape[2]
+        )
+    else:
+        test_array = np.empty(
+            (0, dataset[0].shape[1], dataset[0].shape[2]), dtype=dataset[0].dtype
+        )
+
+    return train_array, test_array
 
 
 def split_random(dataset, test_ratio, seed=0):
@@ -306,6 +365,35 @@ def split_random(dataset, test_ratio, seed=0):
         train_splits.append(arr[perm[:split_idx]])
         test_splits.append(arr[perm[split_idx:]])
     return np.stack(train_splits, axis=0), np.stack(test_splits, axis=0)
+
+
+def split_end(dataset, test_ratio):
+    """
+    End-of-file split: for each file in dataset, take the last test_ratio
+    fraction of frames as the test set, and the preceding frames as the train set.
+    """
+    train_splits = []
+    test_splits = []
+    for idx, arr in enumerate(dataset):
+        n = arr.shape[0]
+        test_count = int(test_ratio * n)
+        # ensure at least one frame in each split if possible
+        test_count = max(test_count, 1) if n > 1 else 0
+        train_count = n - test_count
+
+        print(f"Dataset[{idx}]: Total = {n}, train= {train_count}, test= {test_count}")
+
+        train_splits.append(arr[: n - test_count])
+        test_splits.append(arr[n - test_count :])
+
+    # find the minimal lengths so we can stack into a dense ndarray
+    min_train = min(a.shape[0] for a in train_splits)
+    min_test = min(a.shape[0] for a in test_splits)
+
+    train_array = np.stack([a[:min_train] for a in train_splits], axis=0)
+    test_array = np.stack([a[-min_test:] for a in test_splits], axis=0)
+
+    return train_array, test_array
 
 
 def main():
@@ -332,26 +420,36 @@ def main():
         print(f"ERROR: No .bin files found in {input_dir}")
         return
 
+    # Print configuration info
+    print("Configuration:")
+    print(f"  PC_SIZE: {pc_size}")
+    print(f"  TEST_RATIO: {test_ratio}")
+    print(f"  SPLIT_METHOD: {cfg.SPLIT_METHOD}")
+    print(f"  FLIP_X: {cfg.FLIP_X}")
+    print(f"  FLIP_Y: {cfg.FLIP_Y}")
+
     dataset = []
     # Parallel processing of .bin files
     with ProcessPoolExecutor() as executor:
-        future_to_fp = {
-            executor.submit(process_bin_file, fp, pc_size, shift_arr, cfg_obj): fp
-            for fp in bin_files
+        future_to_idx = {
+            executor.submit(process_bin_file, fp, pc_size, shift_arr, cfg_obj): i
+            for i, fp in enumerate(bin_files)
         }
+
+        # preallocate a list of the right length
+        dataset = [None] * len(bin_files)
+
         for future in tqdm(
-            as_completed(future_to_fp),
-            total=len(bin_files),
+            as_completed(future_to_idx),
+            total=len(future_to_idx),
             desc="Processing .bin files",
             unit="file",
         ):
-            fp = future_to_fp[future]
+            idx = future_to_idx[future]
             try:
-                data = future.result()
-                dataset.append(data)
+                dataset[idx] = future.result()
             except Exception as e:
-                print(f"WARNING: Skipping {fp} due to error: {e}")
-                print(traceback.format_exc())
+                print(f"WARNING: Skipping {bin_files[idx]} due to error: {e}")
 
     if not dataset:
         print("ERROR: No data processed; aborting.")
@@ -368,8 +466,10 @@ def main():
     # Split according to chosen method
     if cfg.SPLIT_METHOD == "sequential":
         train, test = split_sequential(dataset, train_count, min_frames)
-    else:
+    elif cfg.SPLIT_METHOD == "random":
         train, test = split_random(dataset, test_ratio, seed=cfg.SPLIT_SEED)
+    elif cfg.SPLIT_METHOD == "end":
+        train, test = split_end(dataset, test_ratio)
 
     train_path = os.path.join(output_dir, "train.dat")
     test_path = os.path.join(output_dir, "test.dat")
@@ -377,6 +477,18 @@ def main():
     print(f"Saved train.dat {train.shape} to {train_path}")
     test.dump(test_path)
     print(f"Saved test.dat {test.shape} to {test_path}")
+
+    # Create visualizations
+    if hasattr(cfg, "CREATE_VISUALIZATIONS") and cfg.CREATE_VISUALIZATIONS:
+        frame_rate = getattr(cfg, "VIS_FRAME_RATE", 10)
+        max_frames_for_videos = 100
+        create_dataset_visualizations(
+            train, test, output_dir, frame_rate, max_frames_for_videos
+        )
+    else:
+        print("\nTo enable visualizations, add to configuration.py:")
+        print("CREATE_VISUALIZATIONS = True")
+        print("VIS_FRAME_RATE = 10 ")
 
 
 if __name__ == "__main__":

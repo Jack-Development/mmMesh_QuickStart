@@ -105,77 +105,89 @@ class SMPLModule(nn.Module):
         self.smpl_model_m = self.smpl_wrapper.male_smpl
         self.smpl_model_f = self.smpl_wrapper.female_smpl
 
-    def forward(self, q, t, b, g, joint_size):  # b: (10,)
-        batch_size = q.size()[0]
-        length_size = q.size()[1]
-        q = q.view(batch_size * length_size, joint_size, 3, 3)
-        t = t.view(batch_size * length_size, 1, 3)
-        b = b.view(batch_size * length_size, 10)
-        g = g.view(batch_size * length_size)
-        q_blank = self.blank_atom.repeat(batch_size * length_size, 1, 1, 1)
+    def forward(self, q, t, b, g, joint_size):
+        # q: (B, T, J, 3, 3), t: (B, T, 1, 3), b: (B, T, 10), g: (B, T)
+        B, T = q.size(0), q.size(1)
+        N = B * T
+        # flatten batch/time dims
+        q = q.view(N, joint_size, 3, 3)
+        t = t.view(N, 1, 3)
+        b = b.view(N, 10)
+        g = g.view(N)
+
+        # build the SMPL pose sequence
+        q_blank = self.blank_atom.unsqueeze(0).expand(N, -1, -1, -1)  # (N,1,3,3)
         pose = torch.cat(
-            (
-                q_blank,
-                q[:, 1:3, :, :],
-                q_blank,
-                q[:, 3:5, :, :],
-                q_blank.repeat(1, 10, 1, 1),
-                q[:, 5:9, :, :],
-                q_blank.repeat(1, 4, 1, 1),
-            ),
-            1,
-        )
-        rotmat = q[:, 0, :, :]
+            [
+                q_blank,  # root
+                q[:, 1:3],  # some limbs
+                q_blank,  # filler
+                q[:, 3:5],  # more limbs
+                q_blank.expand(N, 10, 3, 3),  # torso/hips
+                q[:, 5:9],  # arms/legs
+                q_blank.expand(N, 4, 3, 3),  # hands/feet
+            ],
+            dim=1,
+        )  # (N, 24, 3, 3)
 
-        male = g > 0.5
-        female = g < 0.5
-        smpl_vertice = torch.zeros(
-            (batch_size * length_size, 6890, 3),
-            dtype=torch.float32,
-            requires_grad=False,
-            device=self.device,
-        )
-        smpl_skeleton = torch.zeros(
-            (batch_size * length_size, 24, 3),
-            dtype=torch.float32,
-            requires_grad=False,
-            device=self.device,
-        )
-        if male.any().item():
-            smpl_vertice[male], smpl_skeleton[male] = self.smpl_model_m(
-                b[male],
-                pose[male],
-                torch.zeros(
-                    (male.sum().item(), 3),
-                    dtype=torch.float32,
-                    requires_grad=False,
-                    device=self.device,
-                ),
-            )
-        if female.any().item():
-            smpl_vertice[female], smpl_skeleton[female] = self.smpl_model_f(
-                b[female],
-                pose[female],
-                torch.zeros(
-                    (female.sum().item(), 3),
-                    dtype=torch.float32,
-                    requires_grad=False,
-                    device=self.device,
-                ),
-            )
+        rotmat = q[:, 0]  # (N, 3, 3)
 
+        # split indices
+        male_idx = torch.nonzero(g > 0.5, as_tuple=True)[0]
+        female_idx = torch.nonzero(g <= 0.5, as_tuple=True)[0]
+
+        # run SMPL for each group
+        v_m, s_m = (
+            self.smpl_model_m(
+                b[male_idx],
+                pose[male_idx],
+                torch.zeros((male_idx.size(0), 3), device=self.device),
+            )
+            if male_idx.numel()
+            else (
+                torch.empty(0, 6890, 3, device=self.device),
+                torch.empty(0, 24, 3, device=self.device),
+            )
+        )
+
+        v_f, s_f = (
+            self.smpl_model_f(
+                b[female_idx],
+                pose[female_idx],
+                torch.zeros((female_idx.size(0), 3), device=self.device),
+            )
+            if female_idx.numel()
+            else (
+                torch.empty(0, 6890, 3, device=self.device),
+                torch.empty(0, 24, 3, device=self.device),
+            )
+        )
+
+        # concatenate predictions
+        verts_all = torch.cat([v_m, v_f], dim=0)  # (Nm+Nf, 6890,3)
+        skel_all = torch.cat([s_m, s_f], dim=0)  # (Nm+Nf, 24, 3)
+
+        # build an inverse index to scatter back in original order
+        inv_idx = torch.empty(N, dtype=torch.long, device=self.device)
+        inv_idx[male_idx] = torch.arange(male_idx.size(0), device=self.device)
+        inv_idx[female_idx] = torch.arange(
+            female_idx.size(0), device=self.device
+        ) + male_idx.size(0)
+
+        # gather back
+        smpl_vertice = verts_all[inv_idx]  # (N, 6890,3)
+        smpl_skeleton = skel_all[inv_idx]  # (N,  24,3)
+
+        # apply global rotation + translation
         smpl_vertice = (
-            torch.transpose(
-                torch.bmm(rotmat, torch.transpose(smpl_vertice, 1, 2)), 1, 2
-            )
-            + t
+            torch.bmm(rotmat, smpl_vertice.transpose(1, 2)).transpose(1, 2) + t
         )
         smpl_skeleton = (
-            torch.transpose(
-                torch.bmm(rotmat, torch.transpose(smpl_skeleton, 1, 2)), 1, 2
-            )
-            + t
+            torch.bmm(rotmat, smpl_skeleton.transpose(1, 2)).transpose(1, 2) + t
         )
-        smpl_vertice = smpl_vertice.view(batch_size, length_size, 6890, 3)
-        smpl_skeleton = smpl_skeleton.view(batch_size, length_size, 24, 3)
+
+        # reshape to (B, T, …)
+        smpl_vertice = smpl_vertice.view(B, T, 6890, 3)
+        smpl_skeleton = smpl_skeleton.view(B, T, 24, 3)
+
         return smpl_vertice, smpl_skeleton
