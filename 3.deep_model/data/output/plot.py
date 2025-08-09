@@ -16,7 +16,7 @@ def plot_two_files(train_file, eval_file):
             parts = line.strip().split()
             if len(parts) >= 5:
                 x_train.append(float(parts[0]))
-                y_train.append(float(parts[4]))
+                y_train.append(float(parts[4]) / 5)
 
     # Read Evaluation data
     x_eval, y_eval = [], []
@@ -25,7 +25,7 @@ def plot_two_files(train_file, eval_file):
             parts = line.strip().split()
             if len(parts) >= 5:
                 x_eval.append(float(parts[0]))
-                y_eval.append(float(parts[4]))
+                y_eval.append(float(parts[4]) / 5)
 
     # Plot both on the same axes
     plt.figure()
@@ -40,7 +40,7 @@ def plot_two_files(train_file, eval_file):
 
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
-filename = "20250617_0203.txt"
+filename = "20250805_1334.txt"
 train_file = os.path.join(script_dir, "loss", filename)
 eval_file = os.path.join(script_dir, "eval", filename)
 plot_two_files(train_file, eval_file)

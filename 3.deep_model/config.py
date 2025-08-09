@@ -4,6 +4,7 @@ CONFIG = {
     "write_slot": 1000,
     "save_slot": 1000,
     "log_slot": 100,
+    "visual_slot": 10000,
     "batch_size": 32,
     "batch_rate": 1,
     "train_size": 80_000,
@@ -19,7 +20,7 @@ CONFIG = {
     "mmwave_fps": 10,
     "split_ratio": 0.1,
     "split_method": "end",  # Options: 'end', 'sequential'
-    "visualization": False,
+    "pre-visualization": False,
 }
 
 DATABASE_CONFIG = {
