@@ -70,11 +70,19 @@ class RawDataReader:
         self.ADCBinFile = open(path, "rb")
 
     def getNextFrame(self, frameconfig):
-        bytes_to_read = frameconfig.frameSize * 4
-        buf = self.ADCBinFile.read(bytes_to_read)
-        if len(buf) < bytes_to_read:
-            return None
-        return np.frombuffer(buf, dtype=np.int16)
+        frame = np.frombuffer(
+            self.ADCBinFile.read(frameconfig.frameSize * 4), dtype=np.int16
+        )
+        return frame
+
+    def getTotalFrames(self, frameconfig):
+        peekingReader = open(self.path, "rb")
+        peekingReader.seek(0, 2)
+        file_size = peekingReader.tell()
+        peekingReader.close()
+
+        frame_size_in_bytes = frameconfig.frameSize * 4
+        return file_size // frame_size_in_bytes
 
     def close(self):
         self.ADCBinFile.close()

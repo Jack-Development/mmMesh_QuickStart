@@ -91,6 +91,7 @@ class Trainer:
         self.write_slot = self.cfg["write_slot"]
         self.save_slot = self.cfg["save_slot"]
         self.log_slot = self.cfg["log_slot"]
+        self.visual_slot = self.cfg["visual_slot"]
         self.batch_size = self.cfg["batch_size"]
         self.batch_rate = self.cfg["batch_rate"]
         self.train_size = self.cfg["train_size"]
@@ -382,7 +383,7 @@ class Trainer:
                 need_print = need_write or (step < 1000 and step % 100 == 0)
                 need_save = step % self.save_slot == 0
                 need_log = step % self.log_slot == 0
-                need_visualize = step % 500 == 0
+                need_visualize = step % self.visual_slot == 0
 
                 if need_write or need_print or need_log:
                     metrics = evaluator.evaluate()
